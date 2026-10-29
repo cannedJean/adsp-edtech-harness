@@ -1,0 +1,15 @@
+{
+  "name": "adsp-edtech-harness",
+  "displayName": "ADsP Top-Down Multi-Agent Learning Harness",
+  "version": "1.0.0",
+  "description": "Neuroscience, pedagogy, learning analytics, and psychometrics-driven multi-agent harness for mastering the ADsP certification exam using 748 past questions and OOD trend extrapolation.",
+  "author": {
+    "name": "Silicon Valley EdTech Architecture Team"
+  },
+  "suggestedPrompts": [
+    "Phase 1 시작: 제50회 ADsP 기출문제를 하향식으로 풀고 소크라테스 문답으로 오답과 헷갈린 개념을 정복하자",
+    "Phase 2 진단: 지금까지 푼 기출 기록을 바탕으로 내 오답 패턴, 메타인지(Brier/ECE), 과목별 과락 위험도를 분석해줘",
+    "Phase 3 백신: 46~50회 최신 출제 동향을 반영한 제51회 대비 신유형(OOD) 문제를 생성하고 시험장 인지부조화 방어 훈련을 진행해줘"
+  ]
+}
+
