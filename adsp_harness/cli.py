@@ -16,6 +16,13 @@ import json
 import sys
 from pathlib import Path
 
+# Ensure UTF-8 output on Windows consoles
+if hasattr(sys.stdout, "reconfigure"):
+    try:
+        sys.stdout.reconfigure(encoding="utf-8")
+    except Exception:
+        pass
+
 from .orchestrator import ADsPHarnessOrchestrator
 from .quota_router import QuotaAwareModelRouter
 
@@ -115,6 +122,9 @@ def cmd_phase2(args: argparse.Namespace) -> None:
     print("=" * 88)
     print(f"• 근본 원인 분석 에이전트 : {report['root_cause_analyst_model']}")
     print(f"• 메타인지 보정 에이전트   : {report['metacognition_coach_model']}")
+    if report.get("opus_root_cause_diagnosis"):
+        print("\n0. [Claude Opus 5.5 실시간 심층 근본 원인 진단]")
+        print(f"   {report['opus_root_cause_diagnosis']}")
 
     mc = report["metacognitive_profile"]
     print("\n1. [메타인지 캘리브레이션 진단 (Murphy Brier 3분해 & ECE)]")
@@ -211,6 +221,18 @@ def cmd_resolve(args: argparse.Namespace) -> None:
     print(json.dumps(res, ensure_ascii=False, indent=2))
 
 
+def cmd_ask(args: argparse.Namespace) -> None:
+    """Invoke Claude Sonnet 5.5 or Claude Opus 5.5 for deep conceptual/math Q&A and record into learner_state.db."""
+    orch = ADsPHarnessOrchestrator(learner_id=args.learner, live_cli=args.live_cli)
+    res = orch.ask_deep_question(
+        item_id=args.item,
+        question=args.question,
+        tier=args.tier,
+        persist_to_note=True,
+    )
+    print(json.dumps(res, ensure_ascii=False, indent=2))
+
+
 def cmd_notes(args: argparse.Namespace) -> None:
     """Generate a personalized master study note markdown file focusing on wrong/confused & corrected concepts."""
     orch = ADsPHarnessOrchestrator(learner_id=args.learner, live_cli=args.live_cli)
@@ -238,7 +260,8 @@ def main() -> None:
         description="ADsP Top-Down Multi-Agent Adaptive Learning Harness CLI"
     )
     parser.add_argument("--learner", type=str, default="default_learner", help="Learner ID")
-    parser.add_argument("--live-cli", action="store_true", help="Invoke live agy.exe headless subagents")
+    parser.add_argument("--live-cli", dest="live_cli", action="store_true", default=True, help="Invoke live agy.exe multi-model agents (default: True)")
+    parser.add_argument("--offline", dest="live_cli", action="store_false", help="Disable live agy.exe calls and use instant hybrid templates")
 
     sub = parser.add_subparsers(dest="command")
 
@@ -259,6 +282,11 @@ def main() -> None:
     p_res.add_argument("--item", type=str, required=True, help="Item ID (e.g., R50-Q31)")
     p_res.add_argument("--misconception", type=str, required=True, help="What the learner confused or misunderstood")
     p_res.add_argument("--correction", type=str, required=True, help="Corrected core concept and explanation")
+
+    p_ask = sub.add_parser("ask", help="Ask Claude Sonnet 5.5 or Claude Opus 5.5 a deep conceptual/math question")
+    p_ask.add_argument("--item", type=str, required=True, help="Item ID (e.g., R50-Q33)")
+    p_ask.add_argument("--question", type=str, required=True, help="Learner's conceptual or mathematical question")
+    p_ask.add_argument("--tier", type=str, default="sonnet", choices=["sonnet", "opus"], help="Model tier: sonnet (Claude Sonnet 5.5) or opus (Claude Opus 5.5)")
 
     p_notes = sub.add_parser("notes", help="Generate personalized master study note markdown")
     p_notes.add_argument("--output", type=str, default=None, help="Output markdown path (default: docs/MY_MASTER_STUDY_NOTE.md)")
@@ -284,6 +312,8 @@ def main() -> None:
         cmd_submit(args)
     elif args.command == "resolve":
         cmd_resolve(args)
+    elif args.command == "ask":
+        cmd_ask(args)
     elif args.command == "notes":
         cmd_notes(args)
     elif args.command == "phase1":

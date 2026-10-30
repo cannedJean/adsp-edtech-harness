@@ -11,12 +11,14 @@ from __future__ import annotations
 
 import json
 import os
+import re
+import shutil
 import subprocess
 import time
 import urllib.request
 from dataclasses import dataclass, asdict
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 
 @dataclass
@@ -116,9 +118,25 @@ class QuotaAwareModelRouter:
         self.min_quota_threshold = min_quota_threshold
         self.ls_address = os.environ.get("ANTIGRAVITY_LS_ADDRESS", "localhost:57493")
         self.csrf_token = os.environ.get("ANTIGRAVITY_CSRF_TOKEN", "")
-        self.agy_bin = str(Path.home() / ".gemini" / "bin" / "agy.exe")
+        self.agy_bin = self._resolve_agy_bin()
         self._quota_cache: Dict[str, ModelQuotaStatus] = {}
         self._last_fetch_ts: float = 0.0
+
+    @staticmethod
+    def _resolve_agy_bin() -> str:
+        """Locate the installed Antigravity CLI (`agy.exe`) executable across standard paths."""
+        which_path = shutil.which("agy")
+        if which_path and os.path.exists(which_path):
+            return which_path
+        candidates = [
+            Path(os.environ.get("LOCALAPPDATA", "")) / "agy" / "bin" / "agy.EXE",
+            Path.home() / "AppData" / "Local" / "agy" / "bin" / "agy.EXE",
+            Path.home() / ".gemini" / "bin" / "agy.exe",
+        ]
+        for cand in candidates:
+            if cand.exists():
+                return str(cand)
+        return str(candidates[0])
 
     def fetch_live_quotas(self, force_refresh: bool = False) -> Dict[str, ModelQuotaStatus]:
         """Fetch live model quotas from Antigravity Language Server RPC."""
@@ -226,18 +244,18 @@ class QuotaAwareModelRouter:
         self,
         role: str,
         prompt: str,
-        timeout_sec: int = 45,
-        live_cli: bool = False,
+        timeout_sec: int = 60,
+        live_cli: bool = True,
     ) -> Dict[str, Any]:
         """
-        Dispatch a single-turn headless agent call via `agy.exe -p --model <selected_model>`.
-        When `live_cli=False`, returns routing metadata so deterministic/hybrid synthesis can run
-        instantaneously or be upgraded to live CLI calls on demand.
+        Dispatch a single-turn headless agent call via `agy.exe --model <selected_model> -p <prompt>`.
+        When `live_cli=False` or `ADSP_HARNESS_OFFLINE_TEST=1`, returns routing metadata so unit tests
+        can run instantaneously while interactive CLI sessions invoke live Claude Sonnet/Opus/Flash models.
         """
         selected = self.select_model_for_role(role)
-        effort = AGENT_ROLE_ROUTING_POLICY.get(role, {}).get("effort", "medium")
+        offline_test = os.environ.get("ADSP_HARNESS_OFFLINE_TEST", "") == "1"
 
-        if not live_cli or not os.path.exists(self.agy_bin):
+        if not live_cli or offline_test or not os.path.exists(self.agy_bin):
             return {
                 "status": "routed_hybrid",
                 "role": role,
@@ -250,13 +268,11 @@ class QuotaAwareModelRouter:
 
         cmd = [
             self.agy_bin,
-            "-p",
             "--model",
             selected.model_id,
-            "--effort",
-            effort,
             "--disable-slash-commands",
             "--dangerously-skip-permissions",
+            "-p",
             prompt,
         ]
         try:

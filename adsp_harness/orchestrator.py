@@ -323,6 +323,40 @@ class ADsPHarnessOrchestrator:
             apply_hypercorrection=apply_hypercorrection,
         )
 
+    def ask_deep_question(
+        self,
+        item_id: str,
+        question: str,
+        tier: str = "sonnet",
+        persist_to_note: bool = True,
+    ) -> Dict[str, Any]:
+        """
+        Dispatch a learner's deep conceptual or mathematical question to Claude Sonnet 5.5 (`tier='sonnet'`)
+        or Claude Opus 5.5 (`tier='opus'`), and automatically append the Q&A to `error_notes`.
+        """
+        if item_id not in self.items_by_id:
+            raise KeyError(f"Unknown item_id: {item_id}")
+        q = self.items_by_id[item_id]
+        cids = q.get("concept_ids") or [q.get("primary_concept_id", f"C0{q['subject']}_CORE")]
+        primary_cid = cids[0]
+        cinfo = self.specialists._primary_concept_info(q)
+
+        res = self.specialists.ask_deep_tutor(q, learner_question=question, tier=tier)
+        if persist_to_note:
+            socratic_log = (
+                f"• [학습자 심층 질문 ({res['model_label']})]: {question}\n"
+                f"• [교정 및 심층 해설]: {res['answer']}"
+            )
+            self.db.upsert_or_resolve_note_by_item(
+                learner_id=self.learner_id,
+                item_id=item_id,
+                concept_id=primary_cid,
+                core_invariant_rule=cinfo.get("invariant"),
+                socratic_dialogue_log=socratic_log,
+                apply_hypercorrection=True,
+            )
+        return res
+
     def generate_personalized_study_note(
         self,
         output_path: Optional[str] = None,

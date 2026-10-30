@@ -366,6 +366,16 @@ class ADsPMultiAgentSpecialists:
                 f"- **불변 규칙**: {cinfo['invariant']}\n"
                 f"- **함정 회피 포인트**: {cinfo['contrast']}"
             )
+            if self.live_cli:
+                res = self.router.invoke_agy_agent(
+                    "socratic_tutor",
+                    f"ADsP 문항 소크라테스 튜터 Turn 2 피드백 작성.\n문항:{q_entry['prompt']}\n선지:{options}\n정답:{ans}\n학습자초기선택:{selected_option}\n학습자답변/질문:{learner_reply}\n"
+                    f"학습자의 답변을 칭찬하거나 오개념을 명쾌하게 바로잡고, 시험장에서 5초 만에 판별하는 핵심 공식 1줄로 요약하라.",
+                    live_cli=True,
+                )
+                if res.get("output"):
+                    consolidation = f"✅ **[{model_status.label}]**\n" + res["output"]
+
             return {
                 "turn": 2,
                 "agent_role": "socratic_tutor",
@@ -374,6 +384,44 @@ class ADsPMultiAgentSpecialists:
                 "message": consolidation,
                 "resolved": True,
             }
+
+    def ask_deep_tutor(
+        self,
+        q_entry: Dict[str, Any],
+        learner_question: str,
+        tier: str = "sonnet",
+    ) -> Dict[str, Any]:
+        """
+        Invoke Claude Sonnet 5.5 (`tier='sonnet'`) or Claude Opus 5.5 (`tier='opus'`)
+        to answer a learner's conceptual or mathematical question in depth during study.
+        """
+        role = "weakness_root_cause_analyst" if tier.lower() == "opus" else "socratic_tutor"
+        model_status = self.router.select_model_for_role(role)
+        cinfo = self._primary_concept_info(q_entry)
+        prompt = (
+            f"당신은 ADsP 국가공인 자격증 수석 튜터({model_status.label})입니다.\n"
+            f"[대상 문항 ID]: {q_entry.get('item_id')}\n"
+            f"[발문]: {q_entry.get('prompt')}\n"
+            f"[선지]: {q_entry.get('options')}\n"
+            f"[정답]: {q_entry.get('answer')}\n"
+            f"[핵심 불변 원리]: {cinfo.get('invariant')}\n\n"
+            f"[학습자의 질문]: {learner_question}\n\n"
+            f"위 학습자의 질문에 대해 1)핵심 결론, 2)직관적 비유 또는 수학적 유도 과정, 3)시험장 1줄 암기 공식 순서로 명쾌하게 해설하세요."
+        )
+        res = self.router.invoke_agy_agent(role, prompt, timeout_sec=60, live_cli=self.live_cli)
+        answer_text = res.get("output") or (
+            f"**[{model_status.label} 핵심 해설]**\n"
+            f"- **불변 원리**: {cinfo.get('invariant')}\n"
+            f"- **변별 포인트**: {cinfo.get('contrast')}"
+        )
+        return {
+            "role": role,
+            "model_id": model_status.model_id,
+            "model_label": model_status.label,
+            "status": res.get("status", "routed_hybrid"),
+            "question": learner_question,
+            "answer": answer_text,
+        }
 
     # -------------------------------------------------------------------------
     # Agent 3 & 4: Phase 2 Global Weakness & Metacognition Calibrator (Opus + Sonnet)
@@ -411,9 +459,26 @@ class ADsPMultiAgentSpecialists:
                 "자신이 아는 것과 모르는 것에 대한 메타인지 보정도(ECE)가 우수합니다. 오답 공발생 빈도가 가장 높은 상위 3개 취약 개념만 집중 타격하면 합격이 안정적입니다."
             )
 
+        opus_deep_diagnosis = None
+        if self.live_cli:
+            top_c = analytics_summary.get("top_confused_concepts", [])[:5]
+            opus_prompt = (
+                f"당신은 ADsP 계량심리·데이터 분석가(Claude Opus 5.5)입니다.\n"
+                f"학습자의 현재 취약/혼동 상위 개념: {json.dumps(top_c, ensure_ascii=False)}\n"
+                f"오류 유형 분포: {json.dumps(analytics_summary.get('error_taxonomy', {}), ensure_ascii=False)}\n"
+                f"합격 시뮬레이션: 예상 총점 {pass_sim.get('expected_total_score')}점, 합격확률 {pass_sim.get('pass_probability')}\n"
+                f"학습자의 오답 패턴을 관통하는 근본 원인(Root-Cause)과 최우선 타격 전략을 4문장 이내로 예리하게 진단하세요."
+            )
+            opus_res = self.router.invoke_agy_agent(
+                "weakness_root_cause_analyst", opus_prompt, timeout_sec=60, live_cli=True
+            )
+            if opus_res.get("output"):
+                opus_deep_diagnosis = opus_res["output"]
+
         return {
             "root_cause_analyst_model": f"{opus_status.label} [{opus_status.model_id}]",
             "metacognition_coach_model": f"{sonnet_status.label} [{sonnet_status.model_id}]",
+            "opus_root_cause_diagnosis": opus_deep_diagnosis,
             "metacognitive_profile": {
                 "type": metacog_type,
                 "brier_score": round(brier_metrics.get("brier_score", 0.0), 4),

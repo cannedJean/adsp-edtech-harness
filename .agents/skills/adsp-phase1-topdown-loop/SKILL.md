@@ -33,8 +33,11 @@ description: >-
    # 특정 1문항 조회 (정답 숨김)
    python -m adsp_harness.cli show --round 50 --qno 1
 
-   # 학습자 정답 및 확신도(1~4) 제출 + 자동 오답노트 + 소크라테스 질문 생성
+   # 학습자 정답 및 확신도(1~4) 제출 + 실제 Flash 자동 오답노트 + 실제 Claude Sonnet 5.5 소크라테스 질문 생성
    python -m adsp_harness.cli submit --item R50-Q01 --ans 2 --conf 4
+
+   # 학습자가 개념/수식 심층 질문을 던졌을 때 실제 Claude Opus 5.5 / Sonnet 5.5 호출 및 노트 자동 저장
+   python -m adsp_harness.cli ask --item R50-Q01 --question "학습자의 질문 내용" --tier opus
 
    # 소크라테스 문답 종료 후 학습자의 오개념과 교정된 해설 DB 영구 기록
    python -m adsp_harness.cli resolve --item R50-Q01 --misconception "헷갈렸던 포인트" --correction "교정된 불변 개념 및 해설"

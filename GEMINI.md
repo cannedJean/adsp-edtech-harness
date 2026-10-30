@@ -35,12 +35,15 @@
 # 실시간 모델별 잔여 토큰(Quota) 및 에이전트 라우팅 매트릭스 확인
 python -m adsp_harness.cli quota
 
-# 단일 문항 조회 및 채점 (대화형 1문항 루프)
-python -m adsp_harness.cli show --round 50 --qno 32
-python -m adsp_harness.cli submit --item R50-Q32 --ans 2 --conf 4
+# 단일 문항 조회 및 채점 (대화형 1문항 루프 - 오답/혼동 시 실제 Flash 오답노트 + Sonnet 5.5 소크라테스 질문 자동 호출)
+python -m adsp_harness.cli show --round 50 --qno 35
+python -m adsp_harness.cli submit --item R50-Q35 --ans 2 --conf 4
+
+# 학습자가 원리나 수식 유도 등 심층 질문을 할 때 실제 Claude Opus 5.5 / Sonnet 5.5 호출 및 노트 자동 기록 (필수!)
+python -m adsp_harness.cli ask --item R50-Q33 --question "학습자의 질문 내용" --tier opus
 
 # 소크라테스 문답 완료 후 학습자의 오개념(misconception)과 교정된 개념(correction) DB 영구 기록 (필수!)
-python -m adsp_harness.cli resolve --item R50-Q32 --misconception "학습자가 헷갈렸던 오개념 요약" --correction "교정된 핵심 불변 원리 및 해설 요약"
+python -m adsp_harness.cli resolve --item R50-Q35 --misconception "학습자가 헷갈렸던 오개념 요약" --correction "교정된 핵심 불변 원리 및 해설 요약"
 
 # "내가 학습한 내용들 전부 정리된 노트 생성해줘" 요청 시 개인 맞춤형 마스터 정리 노트 자동 생성
 python -m adsp_harness.cli notes --output docs/MY_MASTER_STUDY_NOTE.md
