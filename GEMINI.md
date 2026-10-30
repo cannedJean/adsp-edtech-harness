@@ -61,3 +61,17 @@ python -m adsp_harness.cli phase3 --count 5
 python -m adsp_harness.cli demo
 ```
 
+## 4. 현재 학습 진행 상태 및 다음 세션 시작 지점 (`docs/SESSION_HANDOFF.md`)
+
+- **완료된 학습 내역**:
+  1. **제50회 기출 (`R50-Q01` ~ `R50-Q50`)**: 50문항 전수 완료 (34/50 정답, **68점 합격**)
+  2. **제49회 기출 (`R49-Q01` ~ `R49-Q50`)**: 50문항 전수 완료 (25/50 정답, **50점**)
+  3. **오답/혼동 소크라테스 교정**: 누적 64건(`Q2: 22건`, `Q3: 14건`, `Q4: 28건`) 100% `RESOLVED` 및 [`docs/MY_MASTER_STUDY_NOTE.md`](file:///c:/Users/SSAFY/Desktop/ADsP/docs/MY_MASTER_STUDY_NOTE.md) 반영 완료
+  4. **Phase 2 전역 취약점 분석 & 5대 핵심 취약점 족집게 클리닉 완료**:
+     - 제2과목 사분면 우선순위 매트릭스 ([`docs/assets/priority_matrix.png`](file:///c:/Users/SSAFY/Desktop/ADsP/docs/assets/priority_matrix.png)), 분석 조직 구조 3유형(집중·기능·분산)
+     - 제3과목 회귀 결정계수($R^2$ vs $Adj\text{-}R^2$), 시계열 $AR(p)$ PACF 절단 vs $MA(q)$ ACF 절단 원리, 표본추출법(층화 내동간이 vs 군집 내이간동)
+- **다음 세션 시작 지점 (상세 가이드: [`docs/SESSION_HANDOFF.md`](file:///c:/Users/SSAFY/Desktop/ADsP/docs/SESSION_HANDOFF.md))**:
+  - **옵션 A (추천)**: **Phase 3 최신 기출 동향(46~50회) 외삽 신유형(OOD) 백신 훈련** (`python -m adsp_harness.cli phase3 --count 5`)
+  - **옵션 B**: **제48회 기출문제 실전 풀이 (`R48-Q01`부터 시작)** (`python -m adsp_harness.cli show --round 48 --qno 1`)
+
+

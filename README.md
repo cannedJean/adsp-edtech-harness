@@ -6,30 +6,34 @@
 
 ## 📚 문서 및 진행 중인 학습 기록 (In-Progress Study State)
 
+- **[새 환경 세션 이어하기 핸드오프 가이드 (`docs/SESSION_HANDOFF.md`)](docs/SESSION_HANDOFF.md)**: **새로운 환경에서 세션을 재개할 때 어디서부터 어떻게 시작해야 하는지 정리된 필수 가이드** (제50회·제49회 100문항 완주 및 Phase 2 클리닉 요약 포함)
+- **[나만의 개인 맞춤형 마스터 정리 노트 (`docs/MY_MASTER_STUDY_NOTE.md`)](docs/MY_MASTER_STUDY_NOTE.md)**: 제50회·제49회 풀이 중 발생한 오답·혼동·심층질문 **총 64건**에 대한 소크라테스 문답 교정 및 핵심 불변 원리 총정리 노트
 - **[심층 학술 리서치 보고서 (`docs/DEEP_RESEARCH_REPORT.md`)](docs/DEEP_RESEARCH_REPORT.md)**: 뇌과학, 교육공학, 데이터 분석, 데이터 엔지니어링, 계량심리학(IRT/BKT/FSRS-6/Brier Score) 기반 하네스 아키텍처 설계 보고서 (116개 학술 문헌 기반)
-- **[제50회 기출 학습 진행 현황 리포트 (`docs/LEARNING_PROGRESS_R50.md`)](docs/LEARNING_PROGRESS_R50.md)**: `R50-Q01` ~ `R50-Q31` 문항별 풀이 정오표, 2×2 메타인지 사분면(`MASTERED`, `LUCKY_GUESS_CONFUSED`, `ILLUSION_OF_COMPETENCE`, `KNOWN_UNKNOWN`), 자동 생성 오답 노트 및 개념별 BKT/IRT/FSRS-6 숙달도
+- **[제50회 기출 학습 진행 현황 리포트 (`docs/LEARNING_PROGRESS_R50.md`)](docs/LEARNING_PROGRESS_R50.md)**: 제50회 문항별 풀이 정오표 및 2×2 메타인지 사분면 기록
 - **[제50회 인터랙티브 소크라테스 학습 대화록 (`docs/SESSION_TRANSCRIPT_R50.md`)](docs/SESSION_TRANSCRIPT_R50.md)**: `agy` CLI에서 진행한 양방향 문답 및 핵심 개념 복습 전체 로그
 - **실시간 학습자 상태 DB 및 이벤트 스토어**:
-  - `adsp_harness/data/learner_state.db` (SQLite ACID 상태 저장소)
+  - `adsp_harness/data/learner_state.db` (SQLite ACID 상태 저장소 — R50 50문항 + R49 50문항 총 100문항 및 64개 오답노트 기록 완료)
   - `adsp_harness/data/learner_events.jsonl` (Append-only 이벤트 소싱 로그)
 
 ---
 
-## 🚀 학습 이어하기 (`R50-Q32`부터 재개)
+## 🚀 새 환경에서 학습 이어하기 (`Phase 3 신유형 백신` 또는 `R48-Q01`부터 재개)
+
+상세한 진행 내역과 이어하기 프롬프트는 **[`docs/SESSION_HANDOFF.md`](docs/SESSION_HANDOFF.md)**를 참고하세요.
 
 ```powershell
-# AGY CLI 실행 (권한 프롬프트 자동 허용 설정 완료)
-agy --model gemini-3.8-flash-high
+# 1. 추천 코스 A: Phase 3 최신 기출(46~50회) 동향 외삽 기반 신유형(OOD) 백신 훈련
+python -m adsp_harness.cli phase3 --count 5
 
-# 또는 단일 문항 즉시 조회 및 채점 CLI
-python -m adsp_harness.cli show --round 50 --qno 32
-python -m adsp_harness.cli submit --item R50-Q32 --ans <정답번호> --conf <확신도1~4>
+# 2. 추천 코스 B: 제48회 기출 1번(R48-Q01)부터 실전 풀이 시작
+python -m adsp_harness.cli show --round 48 --qno 1
+python -m adsp_harness.cli submit --item R48-Q01 --ans <정답번호> --conf <확신도1~4>
 
-# Phase 2 전역 취약점 & 메타인지(Brier/ECE) & 몬테카를로 합격/과락 시뮬레이션
+# 3. Phase 2 전역 취약점 & 메타인지(Brier/ECE) & 몬테카를로 합격/과락 시뮬레이션
 python -m adsp_harness.cli phase2
 
-# Phase 3 최신 기출(46~50회) 동향 외삽 기반 신유형(OOD) 백신 훈련
-python -m adsp_harness.cli phase3 --count 5
+# 4. 개인 맞춤형 마스터 오답/개념 노트 최신화
+python -m adsp_harness.cli notes --output docs/MY_MASTER_STUDY_NOTE.md
 ```
 
 ---
