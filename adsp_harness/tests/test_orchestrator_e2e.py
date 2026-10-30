@@ -92,3 +92,24 @@ class TestMultiAgentHarnessE2E:
             assert len(item["options"]) == 4
             assert "sit_cognitive_vaccine_protocol" in item
 
+        # Verify Socratic resolution & Personalized Master Study Note generation (Q2, Q3, Q4 all persisted)
+        resolved = orch.resolve_item_socratic_note(
+            item_id=q3["item_id"],
+            learner_misconception="데이터베이스 중복 저장이 통합성이라고 오해함",
+            corrected_explanation="통합된 데이터(Integrated Data)는 중복을 최소화하는 것이 원칙임",
+        )
+        assert resolved["resolved_status"] == "RESOLVED"
+        assert "중복을 최소화" in resolved["socratic_dialogue_log"]
+
+        note_path = tmp_path / "MY_MASTER_STUDY_NOTE.md"
+        note_res = orch.generate_personalized_study_note(output_path=str(note_path))
+        assert note_res["total_notes"] == 3  # Q2 + Q3 + Q4 (Q1 MASTERED excluded)
+        assert note_res["q3_illusion_count"] == 1
+        assert note_res["q4_unknown_count"] == 1
+        assert note_res["q2_confused_count"] == 1
+        assert note_path.exists()
+        content = note_path.read_text(encoding="utf-8")
+        assert "최우선 과교정 노트" in content
+        assert "중복을 최소화" in content
+
+

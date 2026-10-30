@@ -261,6 +261,8 @@ class LearnerStateDB:
         note_why_wrong: str = "",
         note_invariant_rule: str = "",
         note_confused_diff: str = "",
+        note_socratic_log: str = "",
+        note_resolved: bool = False,
     ) -> AttemptRecord:
         """
         Record a learner's question attempt, update continuous psychometric mastery
@@ -427,30 +429,81 @@ class LearnerStateDB:
                 ),
             )
 
-            # 3. Auto-generate Error Note if incorrect
-            if not is_correct and auto_generate_note:
-                note_id = f"note_{uuid.uuid4().hex[:12]}"
+            # 3. Auto-generate or update Error/Confusion Note if incorrect or lucky guess (Q2/Q3/Q4)
+            should_save_note = auto_generate_note and (
+                (not is_correct)
+                or (metacog_quad == MetacogQuadrant.LUCKY_GUESS_CONFUSED.value)
+                or bool(note_why_wrong)
+            )
+            if should_save_note:
                 cursor.execute(
-                    """
-                    INSERT INTO error_notes (
-                        note_id, item_id, learner_id, concept_id, why_wrong_summary,
-                        core_invariant_rule, confused_options_diff, socratic_dialogue_log,
-                        resolved_status, created_at, resolved_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)
-                    """,
-                    (
-                        note_id,
-                        item_id,
-                        learner_id,
-                        concept_id,
-                        note_why_wrong or f"선택지 {selected_option}번 선택 오답 (정답: {correct_answer}번)",
-                        note_invariant_rule or f"개념 [{concept_id}] 기본 정의 및 핵심 불변식 복습 요망",
-                        note_confused_diff or f"선택지 {selected_option}번 vs {correct_answer}번 개념적 전도 차이 분석",
-                        "",
-                        ResolvedStatus.UNRESOLVED.value,
-                        now_ts,
-                    ),
+                    "SELECT note_id, socratic_dialogue_log, resolved_status FROM error_notes WHERE item_id = ? AND learner_id = ? ORDER BY created_at DESC LIMIT 1",
+                    (item_id, learner_id),
                 )
+                existing_note = cursor.fetchone()
+                resolved_val = (
+                    ResolvedStatus.RESOLVED.value
+                    if (note_resolved or bool(note_socratic_log))
+                    else (existing_note["resolved_status"] if existing_note else ResolvedStatus.UNRESOLVED.value)
+                )
+                resolved_ts = now_ts if resolved_val == ResolvedStatus.RESOLVED.value else None
+                why_val = note_why_wrong or (
+                    f"[찍어서 맞힌 혼동 문항 (Q2)] 정답({correct_answer}번)을 맞혔으나 확신도가 낮아 변별 기준 점검 필요"
+                    if is_correct
+                    else f"선택지 {selected_option}번 선택 오답 (정답: {correct_answer}번)"
+                )
+                inv_val = note_invariant_rule or f"개념 [{concept_id}] 기본 정의 및 핵심 불변식 복습 요망"
+                diff_val = note_confused_diff or f"선택지 {selected_option}번 vs {correct_answer}번 개념적 전도 차이 분석"
+                soc_val = note_socratic_log or (existing_note["socratic_dialogue_log"] if existing_note else "")
+
+                if existing_note:
+                    cursor.execute(
+                        """
+                        UPDATE error_notes SET
+                            concept_id = ?,
+                            why_wrong_summary = ?,
+                            core_invariant_rule = ?,
+                            confused_options_diff = ?,
+                            socratic_dialogue_log = ?,
+                            resolved_status = ?,
+                            resolved_at = COALESCE(?, resolved_at)
+                        WHERE note_id = ?
+                        """,
+                        (
+                            concept_id,
+                            why_val,
+                            inv_val,
+                            diff_val,
+                            soc_val,
+                            resolved_val,
+                            resolved_ts,
+                            existing_note["note_id"],
+                        ),
+                    )
+                else:
+                    note_id = f"note_{uuid.uuid4().hex[:12]}"
+                    cursor.execute(
+                        """
+                        INSERT INTO error_notes (
+                            note_id, item_id, learner_id, concept_id, why_wrong_summary,
+                            core_invariant_rule, confused_options_diff, socratic_dialogue_log,
+                            resolved_status, created_at, resolved_at
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            note_id,
+                            item_id,
+                            learner_id,
+                            concept_id,
+                            why_val,
+                            inv_val,
+                            diff_val,
+                            soc_val,
+                            resolved_val,
+                            now_ts,
+                            resolved_ts,
+                        ),
+                    )
 
             conn.commit()
 
@@ -458,6 +511,168 @@ class LearnerStateDB:
         self._append_event("ATTEMPT_RECORDED", learner_id, asdict(record))
 
         return record
+
+    def upsert_or_resolve_note_by_item(
+        self,
+        learner_id: str,
+        item_id: str,
+        concept_id: str,
+        why_wrong_summary: Optional[str] = None,
+        core_invariant_rule: Optional[str] = None,
+        confused_options_diff: Optional[str] = None,
+        socratic_dialogue_log: str = "",
+        apply_hypercorrection: bool = True,
+    ) -> Dict[str, Any]:
+        """
+        Create or update an error/confusion note by `item_id`, recording the learner's
+        initial misconception and the Socratic corrected explanation, and marking it RESOLVED.
+        """
+        now_ts = datetime.now(timezone.utc).isoformat()
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT * FROM error_notes WHERE item_id = ? AND learner_id = ? ORDER BY created_at DESC LIMIT 1",
+                (item_id, learner_id),
+            )
+            existing = cursor.fetchone()
+            if existing:
+                note_id = existing["note_id"]
+                cid = concept_id or existing["concept_id"]
+                why_val = why_wrong_summary or existing["why_wrong_summary"]
+                inv_val = core_invariant_rule or existing["core_invariant_rule"]
+                diff_val = confused_options_diff or existing["confused_options_diff"]
+                soc_val = socratic_dialogue_log or existing["socratic_dialogue_log"]
+                cursor.execute(
+                    """
+                    UPDATE error_notes SET
+                        concept_id = ?,
+                        why_wrong_summary = ?,
+                        core_invariant_rule = ?,
+                        confused_options_diff = ?,
+                        socratic_dialogue_log = ?,
+                        resolved_status = ?,
+                        resolved_at = ?
+                    WHERE note_id = ?
+                    """,
+                    (
+                        cid,
+                        why_val,
+                        inv_val,
+                        diff_val,
+                        soc_val,
+                        ResolvedStatus.RESOLVED.value,
+                        now_ts,
+                        note_id,
+                    ),
+                )
+            else:
+                note_id = f"note_{uuid.uuid4().hex[:12]}"
+                cid = concept_id
+                why_val = why_wrong_summary or f"[{item_id}] 오답 및 혼동 개념 점검"
+                inv_val = core_invariant_rule or f"개념 [{cid}] 핵심 불변 원리"
+                diff_val = confused_options_diff or f"[{item_id}] 선지 변별 포인트"
+                soc_val = socratic_dialogue_log
+                cursor.execute(
+                    """
+                    INSERT INTO error_notes (
+                        note_id, item_id, learner_id, concept_id, why_wrong_summary,
+                        core_invariant_rule, confused_options_diff, socratic_dialogue_log,
+                        resolved_status, created_at, resolved_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        note_id,
+                        item_id,
+                        learner_id,
+                        cid,
+                        why_val,
+                        inv_val,
+                        diff_val,
+                        soc_val,
+                        ResolvedStatus.RESOLVED.value,
+                        now_ts,
+                        now_ts,
+                    ),
+                )
+            conn.commit()
+
+        if apply_hypercorrection:
+            self.resolve_error_note(
+                note_id=note_id,
+                learner_id=learner_id,
+                socratic_dialogue_log=soc_val,
+                apply_hypercorrection=True,
+            )
+
+        return {
+            "note_id": note_id,
+            "item_id": item_id,
+            "learner_id": learner_id,
+            "concept_id": cid,
+            "why_wrong_summary": why_val,
+            "core_invariant_rule": inv_val,
+            "confused_options_diff": diff_val,
+            "socratic_dialogue_log": soc_val,
+            "resolved_status": ResolvedStatus.RESOLVED.value,
+            "resolved_at": now_ts,
+        }
+
+    def get_all_study_notes(self, learner_id: str) -> List[Dict[str, Any]]:
+        """
+        Retrieve all recorded error and confusion notes joined with the latest attempt metadata
+        for personalized master study note generation.
+        """
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT
+                    n.note_id,
+                    n.item_id,
+                    n.learner_id,
+                    n.concept_id,
+                    n.why_wrong_summary,
+                    n.core_invariant_rule,
+                    n.confused_options_diff,
+                    n.socratic_dialogue_log,
+                    n.resolved_status,
+                    n.created_at,
+                    n.resolved_at,
+                    a.round,
+                    a.subject,
+                    a.selected_option,
+                    a.correct_answer,
+                    a.is_correct,
+                    a.confidence_rating,
+                    a.confidence_prob,
+                    a.metacog_quadrant,
+                    a.error_type
+                FROM error_notes n
+                LEFT JOIN (
+                    SELECT a1.*
+                    FROM attempts a1
+                    INNER JOIN (
+                        SELECT item_id, learner_id, MAX(timestamp) AS max_ts
+                        FROM attempts
+                        GROUP BY item_id, learner_id
+                    ) a2 ON a1.item_id = a2.item_id AND a1.learner_id = a2.learner_id AND a1.timestamp = a2.max_ts
+                ) a ON n.item_id = a.item_id AND n.learner_id = a.learner_id
+                WHERE n.learner_id = ?
+                ORDER BY n.item_id ASC
+                """,
+                (learner_id,),
+            )
+            return [dict(row) for row in cursor.fetchall()]
+
+    def get_all_concept_mastery(self, learner_id: str) -> List[ConceptMasteryRecord]:
+        """Retrieve all ConceptMasteryRecord rows for a learner."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT * FROM concept_mastery WHERE learner_id = ? ORDER BY bkt_p_learn ASC",
+                (learner_id,),
+            )
+            return [ConceptMasteryRecord(**dict(row)) for row in cursor.fetchall()]
 
     def resolve_error_note(
         self,

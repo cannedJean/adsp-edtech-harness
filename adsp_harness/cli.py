@@ -200,6 +200,24 @@ def cmd_submit(args: argparse.Namespace) -> None:
     print(json.dumps(res, ensure_ascii=False, indent=2))
 
 
+def cmd_resolve(args: argparse.Namespace) -> None:
+    """Record the learner's initial misconception and Socratic corrected explanation into learner_state.db."""
+    orch = ADsPHarnessOrchestrator(learner_id=args.learner, live_cli=args.live_cli)
+    res = orch.resolve_item_socratic_note(
+        item_id=args.item,
+        learner_misconception=args.misconception,
+        corrected_explanation=args.correction,
+    )
+    print(json.dumps(res, ensure_ascii=False, indent=2))
+
+
+def cmd_notes(args: argparse.Namespace) -> None:
+    """Generate a personalized master study note markdown file focusing on wrong/confused & corrected concepts."""
+    orch = ADsPHarnessOrchestrator(learner_id=args.learner, live_cli=args.live_cli)
+    res = orch.generate_personalized_study_note(output_path=args.output)
+    print(json.dumps(res, ensure_ascii=False, indent=2))
+
+
 def cmd_demo(args: argparse.Namespace) -> None:
     """Run an end-to-end demonstration across Quota Check -> Phase 1 -> Phase 2 -> Phase 3."""
     cmd_quota(args)
@@ -219,7 +237,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description="ADsP Top-Down Multi-Agent Adaptive Learning Harness CLI"
     )
-    parser.add_argument("--learner", type=str, default="sv_edtech_learner", help="Learner ID")
+    parser.add_argument("--learner", type=str, default="default_learner", help="Learner ID")
     parser.add_argument("--live-cli", action="store_true", help="Invoke live agy.exe headless subagents")
 
     sub = parser.add_subparsers(dest="command")
@@ -236,6 +254,14 @@ def main() -> None:
     p_sub.add_argument("--ans", type=str, required=True, help="Selected option (1..4 or short answer)")
     p_sub.add_argument("--conf", type=int, default=3, help="Confidence rating (1..4)")
     p_sub.add_argument("--reply", type=str, default=None, help="Optional learner Socratic reply")
+
+    p_res = sub.add_parser("resolve", help="Record learner misconception and corrected concept after Socratic Q&A")
+    p_res.add_argument("--item", type=str, required=True, help="Item ID (e.g., R50-Q31)")
+    p_res.add_argument("--misconception", type=str, required=True, help="What the learner confused or misunderstood")
+    p_res.add_argument("--correction", type=str, required=True, help="Corrected core concept and explanation")
+
+    p_notes = sub.add_parser("notes", help="Generate personalized master study note markdown")
+    p_notes.add_argument("--output", type=str, default=None, help="Output markdown path (default: docs/MY_MASTER_STUDY_NOTE.md)")
 
     p1 = sub.add_parser("phase1", help="Run Phase 1 Top-Down Past Exam Loop")
     p1.add_argument("--round", type=int, default=50, help="Exam round (32..50)")
@@ -256,6 +282,10 @@ def main() -> None:
         cmd_show(args)
     elif args.command == "submit":
         cmd_submit(args)
+    elif args.command == "resolve":
+        cmd_resolve(args)
+    elif args.command == "notes":
+        cmd_notes(args)
     elif args.command == "phase1":
         cmd_phase1(args)
     elif args.command == "phase2":

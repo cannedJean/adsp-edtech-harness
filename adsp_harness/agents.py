@@ -19,6 +19,9 @@ from dataclasses import dataclass, asdict
 from typing import Any, Dict, List, Optional
 
 from .quota_router import QuotaAwareModelRouter
+from .knowledge_graph import ONTOLOGY_DEFINITIONS
+
+ONTOLOGY_BY_ID: Dict[str, Any] = {node.concept_id: node for node in ONTOLOGY_DEFINITIONS}
 
 
 # Curated ADsP Concept Invariant & Contrast Bank for Instant Zero-Latency + LLM-Enriched Synthesis
@@ -129,8 +132,25 @@ class ADsPMultiAgentSpecialists:
         self.live_cli = live_cli
 
     def _primary_concept_info(self, q_entry: Dict[str, Any]) -> Dict[str, str]:
-        cids = q_entry.get("concept_ids", [])
+        cids = list(q_entry.get("concept_ids", []))
+        primary_cid = q_entry.get("primary_concept_id")
+        if primary_cid and primary_cid not in cids:
+            cids.insert(0, primary_cid)
         for cid in cids:
+            if cid in ONTOLOGY_BY_ID:
+                node = ONTOLOGY_BY_ID[cid]
+                invariants_joined = " / ".join(node.core_invariants[:3])
+                contrast_item = (
+                    node.core_invariants[3]
+                    if len(node.core_invariants) > 3
+                    else node.core_invariants[-1]
+                )
+                return {
+                    "concept_id": cid,
+                    "name_ko": node.name_ko,
+                    "invariant": f"[{node.name_ko}] {invariants_joined}",
+                    "contrast": contrast_item,
+                }
             if cid in CONCEPT_INVARIANT_BANK:
                 return CONCEPT_INVARIANT_BANK[cid]
         # Keyword fallback

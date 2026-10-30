@@ -248,6 +248,13 @@ class ADsPHarnessOrchestrator:
         }
         mapped_err = err_tax_map.get(auto_note.error_taxonomy if auto_note else "NONE_CORRECT", "CONCEPTUAL_CONFUSION")
 
+        socratic_log_str = ""
+        if socratic_turn1 and learner_socratic_reply and socratic_turn2:
+            socratic_log_str = (
+                f"[학습자 초기 생각/오개념]: {learner_socratic_reply}\n"
+                f"[소크라테스 교정 해설]: {socratic_turn2.get('message', '')}"
+            )
+
         attempt_rec = self.db.record_attempt(
             learner_id=self.learner_id,
             item_id=item_id,
@@ -260,10 +267,12 @@ class ADsPHarnessOrchestrator:
             response_time_ms=response_time_ms,
             round_no=int(q["round"]),
             error_type=mapped_err if not is_correct else "NONE",
-            auto_generate_note=(not is_correct),
+            auto_generate_note=needs_intervention,
             note_why_wrong=auto_note.why_wrong_diagnosis if auto_note else "",
             note_invariant_rule=auto_note.core_invariant_rule if auto_note else "",
             note_confused_diff=auto_note.confused_options_contrast if auto_note else "",
+            note_socratic_log=socratic_log_str,
+            note_resolved=bool(socratic_log_str),
         )
 
         return {
@@ -281,6 +290,164 @@ class ADsPHarnessOrchestrator:
             "auto_error_note": asdict(auto_note) if auto_note else None,
             "socratic_turn_1": socratic_turn1,
             "socratic_turn_2": socratic_turn2,
+        }
+
+    def resolve_item_socratic_note(
+        self,
+        item_id: str,
+        learner_misconception: str,
+        corrected_explanation: str,
+        apply_hypercorrection: bool = True,
+    ) -> Dict[str, Any]:
+        """
+        Persist the learner's initial misconception and the Socratic corrected explanation
+        into the `error_notes` table for `item_id` and mark it RESOLVED.
+        """
+        if item_id not in self.items_by_id:
+            raise KeyError(f"Unknown item_id: {item_id}")
+        q = self.items_by_id[item_id]
+        cids = q.get("concept_ids") or [q.get("primary_concept_id", f"C0{q['subject']}_CORE")]
+        primary_cid = cids[0]
+        cinfo = self.specialists._primary_concept_info(q)
+
+        socratic_log = (
+            f"• [내가 헷갈렸거나 잘못 알고 있던 개념]: {learner_misconception}\n"
+            f"• [소크라테스 문답을 통해 교정된 핵심 개념]: {corrected_explanation}"
+        )
+        return self.db.upsert_or_resolve_note_by_item(
+            learner_id=self.learner_id,
+            item_id=item_id,
+            concept_id=primary_cid,
+            core_invariant_rule=cinfo.get("invariant"),
+            socratic_dialogue_log=socratic_log,
+            apply_hypercorrection=apply_hypercorrection,
+        )
+
+    def generate_personalized_study_note(
+        self,
+        output_path: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """
+        Synthesize a comprehensive personalized study notebook (`MY_MASTER_STUDY_NOTE.md`)
+        prioritized by what the learner misunderstood (`Q3: ILLUSION_OF_COMPETENCE`),
+        what they did not know (`Q4: KNOWN_UNKNOWN`), and what they guessed/confused (`Q2: LUCKY_GUESS_CONFUSED`),
+        along with the Socratic corrected explanations and a 1-page exam-day cheat sheet.
+        """
+        from .knowledge_graph import ONTOLOGY_DEFINITIONS
+
+        onto_map = {n.concept_id: n for n in ONTOLOGY_DEFINITIONS}
+        notes = self.db.get_all_study_notes(self.learner_id)
+        mastery_list = self.db.get_all_concept_mastery(self.learner_id)
+
+        q3_illusion: List[Dict[str, Any]] = []
+        q4_unknown: List[Dict[str, Any]] = []
+        q2_confused: List[Dict[str, Any]] = []
+
+        for n in notes:
+            quad = n.get("metacog_quadrant") or ""
+            if quad == MetacogQuadrant.ILLUSION_OF_COMPETENCE.value:
+                q3_illusion.append(n)
+            elif quad == MetacogQuadrant.LUCKY_GUESS_CONFUSED.value or (
+                n.get("is_correct") == 1 and quad != MetacogQuadrant.ILLUSION_OF_COMPETENCE.value
+            ):
+                q2_confused.append(n)
+            else:
+                q4_unknown.append(n)
+
+        lines: List[str] = [
+            "# 📘 ADsP 개인 맞춤형 오답·혼동·교정 마스터 정리 노트",
+            "",
+            f"- **학습자 ID**: `{self.learner_id}`",
+            f"- **총 누적 집중 관리 문항**: **{len(notes)}문항** "
+            f"(🚨 오개념 교정 `Q3`: **{len(q3_illusion)}건** | ❓ 미숙지 개념 `Q4`: **{len(q4_unknown)}건** | 🎯 혼동/찍어서 맞힌 개념 `Q2`: **{len(q2_confused)}건**)",
+            "",
+            "> [!IMPORTANT]",
+            "> 이 노트는 학습자님이 기출문제를 풀면서 **확신했지만 틀렸던 오개념(Q3)**, **잘 몰랐던 취약 개념(Q4)**, **찍어서 맞혔거나 선지가 헷갈렸던 문항(Q2)**과 **소크라테스 문답을 통해 교정된 핵심 개념**만을 우선순위별로 집약한 맞춤형 단권화 노트입니다.",
+            "",
+        ]
+
+        def _render_note_section(title: str, subtitle: str, items: List[Dict[str, Any]]) -> None:
+            lines.append(f"## {title}")
+            lines.append(f"{subtitle}\n")
+            if not items:
+                lines.append("- *(해당 카테고리의 문항이 없습니다.)*\n")
+                return
+            for item in items:
+                iid = item["item_id"]
+                q = self.items_by_id.get(iid, {})
+                cid = item["concept_id"]
+                node = onto_map.get(cid)
+                cname = node.name_ko if node else cid
+                subj = item.get("subject") or q.get("subject", "")
+                sel = item.get("selected_option", "-")
+                ans = item.get("correct_answer") or q.get("answer", "-")
+                conf = item.get("confidence_rating", "-")
+                prompt_first = (q.get("prompt") or "").strip()
+                options = q.get("options", [])
+
+                lines.append(f"### 📌 [{iid}] {cname} (`{cid}` | 제{subj}과목)")
+                if prompt_first:
+                    lines.append(f"**[기출 발문]** {prompt_first}")
+                if options:
+                    for idx, opt in enumerate(options, 1):
+                        marker = " **(✔ 정답)**" if str(idx) == str(ans) else (" **(❌ 내 선택)**" if str(idx) == str(sel) and str(sel) != str(ans) else "")
+                        lines.append(f"- ({idx}) {opt}{marker}")
+                lines.append("")
+                lines.append(f"- **내 응답 기록**: 선택 `{sel}` / 정답 `{ans}` (확신도: `{conf}`단계)")
+                lines.append(f"- **오답/혼동 진단**: {item['why_wrong_summary']}")
+                if item.get("socratic_dialogue_log"):
+                    lines.append("- **💡 내가 몰랐던 점 & 교정된 개념 정리**:")
+                    for s_line in item["socratic_dialogue_log"].splitlines():
+                        if s_line.strip():
+                            lines.append(f"  {s_line.strip()}")
+                lines.append(f"- **🔑 시험장 핵심 불변 원리 (Core Invariant)**: {item['core_invariant_rule']}")
+                lines.append("")
+                lines.append("---")
+                lines.append("")
+
+        _render_note_section(
+            "1. 🚨 최우선 과교정 노트: 확신했지만 틀렸던 오개념 (`Q3: ILLUSION_OF_COMPETENCE`)",
+            "잘못된 선수 지식이나 부정형 발문·대칭 개념 함정에 빠져 확신(3~4단계)을 가지고 틀렸던 문항들입니다. 시험장에서 가장 먼저 다시 확인해야 합니다.",
+            q3_illusion,
+        )
+        _render_note_section(
+            "2. ❓ 몰랐던 취약 개념 & 공식 완벽 정리 (`Q4: KNOWN_UNKNOWN`)",
+            "개념이나 수식이 낯설어 낮은 확신도(1~2단계)로 틀렸던 문항들입니다. 교정된 핵심 정의와 공식을 암기하세요.",
+            q4_unknown,
+        )
+        _render_note_section(
+            "3. 🎯 찍어서 맞혔거나 헷갈렸던 선지 변별 노트 (`Q2: LUCKY_GUESS_CONFUSED`)",
+            "정답을 맞히긴 했으나 확신도(1~2단계)가 낮았던 문항들입니다. 변형 출제 시 틀리지 않도록 헷갈렸던 오답 선지의 소거 기준을 확립하세요.",
+            q2_confused,
+        )
+
+        # Part 4: Concept Mastery Cheat Sheet for Weak/Confused Concepts
+        lines.append("## 4. 📊 취약·혼동 개념 한눈에 보기 요약표 (Exam-Day Cheat Sheet)")
+        lines.append("")
+        lines.append("| 개념 ID | 개념명 | 과목 | BKT 숙달도 | 오답 수 | 고확신 오답 | 찍어서 맞힘 | 핵심 불변 공식/원리 요약 |")
+        lines.append("|---|---|---:|---:|---:|---:|---:|---|")
+        seen_cids = {n["concept_id"] for n in notes}
+        for m in sorted(mastery_list, key=lambda x: (x.bkt_p_learn, -x.error_count)):
+            if m.concept_id in seen_cids or m.error_count > 0 or m.lucky_guess_count > 0:
+                node = onto_map.get(m.concept_id)
+                cname = node.name_ko if node else m.concept_id
+                inv_short = " / ".join(node.core_invariants[:2]) if node else ""
+                lines.append(
+                    f"| `{m.concept_id}` | **{cname}** | {m.subject}과목 | {m.bkt_p_learn*100:.1f}% | "
+                    f"{m.error_count} | {m.high_conf_error_count} | {m.lucky_guess_count} | {inv_short} |"
+                )
+        lines.append("")
+
+        out_file = Path(output_path) if output_path else (self.workspace_root / "docs" / "MY_MASTER_STUDY_NOTE.md")
+        out_file.parent.mkdir(parents=True, exist_ok=True)
+        out_file.write_text("\n".join(lines), encoding="utf-8")
+
+        return {
+            "output_path": str(out_file),
+            "total_notes": len(notes),
+            "q3_illusion_count": len(q3_illusion),
+            "q4_unknown_count": len(q4_unknown),
+            "q2_confused_count": len(q2_confused),
         }
 
     # =========================================================================
